@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>맛집 찾기 Q-learning</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  :root{
+    --bg:#f6f4ef; --panel:#ffffff; --ink:#1d2127; --muted:#6b7078; --line:#d9d5cc;
+    --accent:#2457d6; --accent-soft:#e6edfc; --warn:#e8930c; --good:#1f8a4c; --bad:#c8372d;
+    --wall:#3b3d42; --goal:#f2b01e; --goal2:#f07c2a;
+    --btn:#ffffff; --toast-bg:#1d2127; --toast-fg:#ffffff; --on-accent:#ffffff;
+    /* 격자판은 칠판 대신 '흰 종이' 느낌으로 두 테마 모두 같은 색을 씁니다 */
+    --paper:#ffffff; --b-good:#1f8a4c; --b-bad:#c8372d; --b-accent:#2457d6; --b-muted:#9a968e;
+  }
+  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+    --bg:#15171b; --panel:#1e2127; --ink:#e8e6e1; --muted:#9aa0a8; --line:#353a42;
+    --accent:#7b9dff; --accent-soft:#24314f; --btn:#262a31; --toast-bg:#e8e6e1; --toast-fg:#15171b; --on-accent:#0f1420;
+    color-scheme:dark }}
+  :root[data-theme="dark"]{
+    --bg:#15171b; --panel:#1e2127; --ink:#e8e6e1; --muted:#9aa0a8; --line:#353a42;
+    --accent:#7b9dff; --accent-soft:#24314f; --btn:#262a31; --toast-bg:#e8e6e1; --toast-fg:#15171b; --on-accent:#0f1420;
+    color-scheme:dark }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",system-ui,sans-serif}
+  header{padding-block:14px 6px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  header h1{font-size:22px;margin:0;letter-spacing:-.5px}
+  header p{margin:0;color:var(--muted);font-size:14px}
+  main{display:grid;grid-template-columns:minmax(320px,640px) minmax(300px,1fr);gap:16px;padding-block:8px 24px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));align-items:start}
+  main>*{min-width:0}
+  @media (max-width:900px){main{grid-template-columns:1fr}
+    .mpad{display:grid!important;margin-top:12px} .side .pad{display:none}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card h2{font-size:15px;margin:0 0 10px;color:var(--muted);font-weight:700}
+  #board{background:var(--paper);border-radius:4px;width:100%;height:auto;display:block;user-select:none;touch-action:manipulation}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+  .stat{background:var(--bg);border-radius:10px;padding:8px 10px}
+  .stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+  .stat span{font-size:12px;color:var(--muted)}
+  .side{display:flex;flex-direction:column;gap:14px}
+  .pad{display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(2,52px);gap:6px;justify-content:center}
+  .pad button{font-size:22px}
+  .mpad{display:none}
+  .pad .up{grid-column:2;grid-row:1}.pad .left{grid-column:1;grid-row:2}.pad .down{grid-column:2;grid-row:2}.pad .right{grid-column:3;grid-row:2}
+  button{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--btn);border-radius:9px;padding:8px 12px;cursor:pointer;color:var(--ink);touch-action:manipulation}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+  button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
+  button:disabled{opacity:.45;cursor:default}
+  .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .hint{font-size:12.5px;color:var(--muted);margin:8px 0 0;line-height:1.5}
+  #calc{font-size:15px;line-height:1.75;min-height:118px}
+  #calc .move{font-weight:700;margin-bottom:4px}
+  #calc .eq{font-variant-numeric:tabular-nums;background:var(--bg);border-radius:8px;padding:6px 10px;margin:4px 0}
+  #calc .eq small{color:var(--muted);display:block;font-size:12px;line-height:1.4}
+  #calc .res{color:var(--accent);font-weight:800}
+  .settings{display:grid;grid-template-columns:auto 1fr auto;gap:8px 10px;align-items:center;font-size:14px}
+  .settings input[type=range]{width:100%}
+  .num{display:flex;gap:6px;align-items:center}
+  .pm{padding:4px 0;width:40px;font-size:17px;font-weight:700}
+  .settings .num input{width:72px;font:inherit;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--btn);color:var(--ink)}
+  .settings output{font-variant-numeric:tabular-nums;min-width:40px;text-align:right;font-weight:700}
+  .sep{grid-column:1/-1;border-top:1px dashed var(--line);margin:2px 0}
+  #log{font-size:13px;font-variant-numeric:tabular-nums;color:var(--muted);margin:0;padding-left:18px;max-height:150px;overflow:auto}
+  #log li{margin:2px 0}
+  #log li:first-child{color:var(--ink);font-weight:700}
+  #toast{position:fixed;left:50%;top:18px;transform:translateX(-50%) translateY(-30px);opacity:0;background:var(--toast-bg);color:var(--toast-fg);
+    padding:10px 18px;border-radius:10px;font-size:16px;transition:.25s;pointer-events:none;z-index:9}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-top:10px}
+  .legend i{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:4px;border:1px solid var(--line)}
+  @media (prefers-reduced-motion: reduce){.changed{animation:none}#toast{transition:none}}
+  @keyframes pulse{0%{stroke-width:7}100%{stroke-width:3}}
+  .changed{stroke:var(--warn);stroke-width:3;animation:pulse .6s ease-out}
+  #chart{width:100%;height:70px;display:block}
+  select{font:inherit;font-size:14px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--btn);color:var(--ink)}
+  @media (max-width:520px){.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🍜 맛집 찾기 Q-learning</h1>
+  <p>방향키(또는 버튼)로 로봇을 움직여 보세요. 한 걸음마다 그 칸의 <b>그 방향</b> Q값이 바뀝니다.</p>
+</header>
+
+<main>
+  <section class="card">
+    <svg id="board" viewBox="0 0 500 500" aria-label="5x5 격자와 Q값"></svg>
+    <div class="pad mpad">
+      <button class="up" data-a="0" aria-label="위">↑</button>
+      <button class="left" data-a="3" aria-label="왼쪽">←</button>
+      <button class="down" data-a="2" aria-label="아래">↓</button>
+      <button class="right" data-a="1" aria-label="오른쪽">→</button>
+    </div>
+    <div class="legend">
+      <span><i style="background:hsl(140,55%,55%)"></i>Q값 +</span>
+      <span><i style="background:hsl(4,75%,70%)"></i>Q값 −</span>
+      <span><i style="background:var(--paper)"></i>아직 0</span>
+      <span><i style="background:var(--paper);border:3px solid var(--warn)"></i>방금 바뀐 칸</span>
+      <span>칸 가운데 화살표 = 지금 가장 좋은 방향</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><span>끝난 에피소드</span><b id="sEp">0</b></div>
+      <div class="stat"><span>이번 걸음 수</span><b id="sStep">0</b></div>
+      <div class="stat"><span>이번 점수 합</span><b id="sRew">0</b></div>
+      <div class="stat"><span>탐험 확률 ε</span><b id="sEps">0</b></div>
+    </div>
+    <h2 style="margin-top:14px">에피소드별 걸음 수 <span style="font-weight:400">(초록 = 맛집 도착, 회색 = 실패)</span></h2>
+    <svg id="chart" viewBox="0 0 600 70" preserveAspectRatio="none"></svg>
+    <h2 style="margin-top:14px">시작 칸(1번)의 가장 큰 Q값 <span style="font-weight:400">(에피소드가 끝날 때마다 기록)</span></h2>
+    <svg id="chart2" viewBox="0 0 600 90"></svg>
+  </section>
+
+  <div class="side">
+    <section class="card">
+      <h2>① 직접 움직이기</h2>
+      <div class="pad">
+        <button class="up" data-a="0" title="위 (↑)">↑</button>
+        <button class="left" data-a="3" title="왼쪽 (←)">←</button>
+        <button class="down" data-a="2" title="아래 (↓)">↓</button>
+        <button class="right" data-a="1" title="오른쪽 (→)">→</button>
+      </div>
+      <div class="row" style="justify-content:center;margin-top:10px">
+        <button id="btnHome">처음 칸으로</button>
+        <button id="btnResetQ">Q-table 지우기</button>
+        <button id="btnArrows" class="on">화살표 보기</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>② 방금 일어난 계산</h2>
+      <div id="calc"><span style="color:var(--muted)">아직 움직이지 않았어요. 방향키를 눌러 보세요.</span></div>
+    </section>
+
+    <section class="card">
+      <h2>③ 컴퓨터가 스스로 연습하기 (ε-greedy)</h2>
+      <div class="row">
+        <button id="auto1">1걸음</button>
+        <button id="autoE1">1 에피소드</button>
+        <button id="autoE10">10 에피소드</button>
+        <button id="autoE100" class="primary">100 에피소드</button>
+        <button id="btnStop">■ 멈춤</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label for="speed" style="font-size:14px">속도</label>
+        <select id="speed">
+          <option value="700">느리게</option>
+          <option value="250" selected>보통</option>
+          <option value="60">빠르게</option>
+          <option value="0">순식간에</option>
+        </select>
+      </div>
+      <p class="hint">자동 연습은 SPIKE 코드처럼 한 에피소드에 최대 50걸음까지 해 봅니다. 그 안에 맛집에 못 가면 실패로 치고 처음 칸에서 다시 시작합니다.</p>
+    </section>
+
+    <section class="card">
+      <h2>④ 규칙 정하기</h2>
+      <div class="row" style="margin-bottom:10px">
+        <button id="presetEasy">쉬운 규칙 (칠판 버전)</button>
+        <button id="presetCode">SPIKE 코드 규칙</button>
+      </div>
+      <div class="settings">
+        <label for="alpha">학습률 α</label><input id="alpha" type="range" min="0" max="1" step="0.05"><output id="oAlpha"></output>
+        <label for="gamma">할인율 γ</label><input id="gamma" type="range" min="0" max="1" step="0.05"><output id="oGamma"></output>
+        <label for="eps">탐험 확률 ε</label><input id="eps" type="range" min="0" max="1" step="0.05"><output id="oEps"></output>
+        <span></span><label style="grid-column:2/4;font-size:13px"><input id="decay" type="checkbox"> ε 점점 줄이기 (50 에피소드마다 ×0.8)</label>
+        <label for="slip">미끄러운 바닥</label><input id="slip" type="range" min="0" max="0.5" step="0.05"><output id="oSlip"></output>
+        <span></span><span class="hint" style="grid-column:2/4;margin:0">이 확률만큼 바람에 밀려 엉뚱한 방향으로 갑니다 (α 실험용)</span>
+        <div class="sep"></div>
+        <label for="rStep">한 걸음 이동</label><span class="num"><button type="button" class="pm" data-for="rStep" aria-label="부호 바꾸기 (+/−)">±</button><input id="rStep" type="text" inputmode="decimal" autocomplete="off"></span><span>점</span>
+        <label for="rHit">벽·바깥 충돌</label><span class="num"><button type="button" class="pm" data-for="rHit" aria-label="부호 바꾸기 (+/−)">±</button><input id="rHit" type="text" inputmode="decimal" autocomplete="off"></span><span>점</span>
+        <label for="rGoal">맛집 A 🍜</label><span class="num"><button type="button" class="pm" data-for="rGoal" aria-label="부호 바꾸기 (+/−)">±</button><input id="rGoal" type="text" inputmode="decimal" autocomplete="off"></span><span>점</span>
+        <label for="rGoal2">맛집 B 🍣</label><span class="num"><button type="button" class="pm" data-for="rGoal2" aria-label="부호 바꾸기 (+/−)">±</button><input id="rGoal2" type="text" inputmode="decimal" autocomplete="off"></span><span>점</span>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button id="mapDefault">기본 지도</button>
+        <button id="mapTwo">맛집 2개 지도</button>
+        <button id="btnEdit">✏️ 지도 바꾸기</button>
+      </div>
+      <p class="hint" id="editHint">지도 바꾸기를 켜고 칸을 클릭하면 <b>빈칸 → 벽 → 맛집 A → 맛집 B → 빈칸</b> 순서로 바뀝니다. <b>맛집 2개 지도</b>는 벽 없이 가까운 맛집 A(5번 칸)와 먼 맛집 B(25번 칸)를 둔 ε 실험용 지도입니다.</p>
+    </section>
+
+    <section class="card">
+      <h2>⑤ 최근 바뀐 Q값</h2>
+      <ol id="log"></ol>
+    </section>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+(() => {
+  // ---------- 상수 ----------
+  const N = 5, S = 100;                       // 5x5, 칸 크기
+  const UP = 0, RIGHT = 1, DOWN = 2, LEFT = 3;
+  const DIR_NAME = ["위 ↑", "오른쪽 →", "아래 ↓", "왼쪽 ←"];
+  const DIR_ARROW = ["↑", "→", "↓", "←"];
+  const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];
+  const START = 0, MAX_AUTO_STEPS = 50;
+  const EMPTY = 0, WALL = 1, GOAL = 2, GOAL2 = 3;
+
+  const PRESETS = {
+    easy: { alpha: 1, gamma: 0.9, eps: 0, decay: false, slip: 0, rStep: 0, rHit: 0, rGoal: 1, rGoal2: 10 },
+    code: { alpha: 0.2, gamma: 0.9, eps: 0.3, decay: true, slip: 0, rStep: -1, rHit: -5, rGoal: 30, rGoal2: 60 }
+  };
+
+  // ---------- 상태 ----------
+  let cells, Q, agent, steps, epReward, episodes, trail, lastChange, history, logItems;
+  let showArrows = true, editMode = false, running = false;
+  const P = {};
+
+  const $ = id => document.getElementById(id);
+  const board = $("board");
+
+  function defaultMap() {
+    cells = new Array(N * N).fill(EMPTY);
+    [2, 7, 12, 17].forEach(i => cells[i] = WALL);   // 3, 8, 13, 18번 칸
+    cells[24] = GOAL;                                 // 25번 칸
+  }
+  function twoGoalMap() {                             // 영상 속 칠판처럼: 가까운 맛집 A, 먼 맛집 B
+    cells = new Array(N * N).fill(EMPTY);
+    cells[4] = GOAL;                                  // 5번 칸 (오른쪽 위)
+    cells[24] = GOAL2;                                // 25번 칸 (오른쪽 아래)
+  }
+  function resetQ() {
+    Q = Array.from({ length: N * N }, () => [0, 0, 0, 0]);
+    episodes = 0; history = []; logItems = []; lastChange = null;
+    goHome();
+  }
+  function goHome() { agent = START; steps = 0; epReward = 0; trail = [START]; }
+
+  // ---------- 숫자 표시 ----------
+  function fmt(v) {
+    if (Math.abs(v) < 1e-9) return "0";
+    const a = Math.abs(v);
+    let s = a >= 1 ? v.toFixed(1) : v.toFixed(2);   // 1보다 작으면 소수 둘째 자리까지 (0.81, 0.73 …)
+    s = s.replace(/\.?0+$/, "");
+    return s === "-0" ? "0" : s;
+  }
+  const signed = v => (v < 0 ? "(" + fmt(v) + ")" : fmt(v));
+
+  // ---------- 환경 ----------
+  function rewardOfGoal(t) { return t === GOAL ? P.rGoal : P.rGoal2; }
+  function envStep(s, a0) {
+    let a = a0, slipNote = "";
+    if (P.slip > 0 && Math.random() < P.slip) {       // 미끄러운 바닥: 엉뚱한 방향으로
+      a = Math.floor(Math.random() * 4);
+      if (a !== a0) slipNote = `💨 미끄러져서 ${DIR_NAME[a]} 쪽으로! `;
+    }
+    const r = envMove(s, a); r.why = slipNote + r.why; return r;
+  }
+  function envMove(s, a) {
+    const x = s % N, y = Math.floor(s / N);
+    const nx = x + DX[a], ny = y + DY[a];
+    if (nx < 0 || nx >= N || ny < 0 || ny >= N) return { next: s, r: P.rHit, done: false, why: "바깥으로 못 나가요 (제자리)" };
+    const ns = ny * N + nx;
+    if (cells[ns] === WALL) return { next: s, r: P.rHit, done: false, why: "벽에 부딪혔어요 (제자리)" };
+    if (cells[ns] === GOAL || cells[ns] === GOAL2) return { next: ns, r: rewardOfGoal(cells[ns]), done: true, why: "맛집 도착!" };
+    return { next: ns, r: P.rStep, done: false, why: "" };
+  }
+  const maxQ = s => Math.max(...Q[s]);
+
+  // ---------- Q-learning 한 걸음 ----------
+  function doStep(a, auto) {
+    if (editMode) return;
+    const s = agent;
+    if (cells[s] === GOAL || cells[s] === GOAL2) { goHome(); }
+    const res = envStep(agent, a);
+    const old = Q[agent][a];
+    const futureMax = res.done ? 0 : maxQ(res.next);
+    const target = res.done ? res.r : res.r + P.gamma * futureMax;
+    const nq = (1 - P.alpha) * old + P.alpha * target;
+    Q[agent][a] = nq;
+
+    lastChange = { s: agent, a, old, nq, r: res.r, futureMax, target, done: res.done, next: res.next, why: res.why };
+    logItems.unshift(`Ep ${episodes + 1} · ${agent + 1}번 칸 ${DIR_ARROW[a]} : ${fmt(old)} → ${fmt(nq)}`);
+    if (logItems.length > 30) logItems.pop();
+
+    agent = res.next; steps++; epReward += res.r;
+    trail.push(agent);
+
+    if (res.done) {
+      endEpisode(true, auto);
+    } else if (auto && steps >= MAX_AUTO_STEPS) {
+      endEpisode(false, auto);
+    }
+  }
+
+  function endEpisode(reached, auto) {
+    episodes++;
+    history.push({ steps, reached, startQ: maxQ(START) });
+    if (P.decay && episodes % 50 === 0) {
+      P.eps = Math.max(0.05, +(P.eps * 0.8).toFixed(4));
+      syncInputs();
+    }
+    const fast = auto && +$("speed").value === 0;
+    if (!fast) toast(reached ? `🍜 맛집 도착! 에피소드 ${episodes} 끝 (${steps}걸음, 점수 ${fmt(epReward)})`
+                             : `😵 50걸음 안에 못 찾았어요. 에피소드 ${episodes} 끝`);
+    goHome();
+  }
+
+  function chooseAction() {
+    if (Math.random() < P.eps) return Math.floor(Math.random() * 4);
+    const m = maxQ(agent);
+    const c = [0, 1, 2, 3].filter(a => Q[agent][a] === m);
+    return c[Math.floor(Math.random() * c.length)];
+  }
+
+  // ---------- 그리기 ----------
+  let scale = 1;
+  function color(v) {
+    if (Math.abs(v) < 1e-9) return "#ffffff";
+    const t = Math.min(1, Math.abs(v) / scale);
+    return v > 0 ? `hsl(140,55%,${(97 - t * 50).toFixed(1)}%)` : `hsl(4,75%,${(97 - t * 38).toFixed(1)}%)`;
+  }
+  function render() {
+    scale = 1;
+    for (let s = 0; s < N * N; s++) if (cells[s] === EMPTY) for (const v of Q[s]) scale = Math.max(scale, Math.abs(v));
+
+    let h = "";
+    for (let s = 0; s < N * N; s++) {
+      const x0 = (s % N) * S, y0 = Math.floor(s / N) * S, cx = x0 + S / 2, cy = y0 + S / 2;
+      if (cells[s] === WALL) {
+        h += `<rect x="${x0}" y="${y0}" width="${S}" height="${S}" fill="var(--wall)" data-s="${s}"/>
+              <text x="${cx}" y="${cy + 6}" text-anchor="middle" font-size="18" fill="#fff" font-weight="700" pointer-events="none">벽</text>`;
+        continue;
+      }
+      if (cells[s] === GOAL || cells[s] === GOAL2) {
+        const g = cells[s] === GOAL;
+        h += `<rect x="${x0}" y="${y0}" width="${S}" height="${S}" fill="${g ? "var(--goal)" : "var(--goal2)"}" data-s="${s}"/>
+              <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="30" pointer-events="none">${g ? "🍜" : "🍣"}</text>
+              <text x="${cx}" y="${cy + 28}" text-anchor="middle" font-size="15" font-weight="800" pointer-events="none">맛집 ${g ? "A" : "B"} ${rewardOfGoal(cells[s]) >= 0 ? "+" : ""}${rewardOfGoal(cells[s])}</text>`;
+        continue;
+      }
+      const tri = [
+        [[x0, y0], [x0 + S, y0], [cx, cy]],
+        [[x0 + S, y0], [x0 + S, y0 + S], [cx, cy]],
+        [[x0, y0 + S], [x0 + S, y0 + S], [cx, cy]],
+        [[x0, y0], [x0, y0 + S], [cx, cy]]
+      ];
+      const tp = [[cx, y0 + 22], [x0 + S - 20, cy + 5], [cx, y0 + S - 12], [x0 + 20, cy + 5]];
+      const m = maxQ(s);
+      const ties = Q[s].filter(v => v === m).length;
+      for (let a = 0; a < 4; a++) {
+        const v = Q[s][a];
+        const ch = lastChange && lastChange.s === s && lastChange.a === a;
+        h += `<polygon points="${tri[a].map(p => p.join(",")).join(" ")}" fill="${color(v)}" stroke="#b9b4aa" stroke-width="1" ${ch ? 'class="changed"' : ""} data-s="${s}"/>`;
+      }
+      for (let a = 0; a < 4; a++) {
+        const v = Q[s][a];
+        const bold = showArrows && ties === 1 && v === m;
+        h += `<text x="${tp[a][0]}" y="${tp[a][1]}" text-anchor="middle" font-size="${bold ? 15 : 14}" font-weight="${bold ? 800 : 500}" fill="${v === 0 ? "#a3a09a" : "#1d2127"}" pointer-events="none" style="font-variant-numeric:tabular-nums">${fmt(v)}</text>`;
+      }
+      h += `<text x="${x0 + 5}" y="${y0 + 13}" font-size="11" fill="#8a867e" pointer-events="none">${s + 1}</text>`;
+      if (s === START) h += `<text x="${x0 + S - 5}" y="${y0 + S - 6}" font-size="11" text-anchor="end" fill="var(--b-accent)" font-weight="700" pointer-events="none">시작</text>`;
+      if (showArrows && ties === 1 && s !== agent) {
+        const best = Q[s].indexOf(m);
+        h += `<text x="${cx}" y="${cy + 8}" text-anchor="middle" font-size="22" font-weight="900" fill="${m > 0 ? "var(--b-good)" : (m === 0 ? "var(--b-muted)" : "var(--b-bad)")}" opacity=".75" pointer-events="none">${DIR_ARROW[best]}</text>`;
+      }
+    }
+    // 이번 에피소드 발자국
+    if (trail.length > 1) {
+      const pts = trail.map(s => `${(s % N) * S + S / 2},${Math.floor(s / N) * S + S / 2}`).join(" ");
+      h += `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" opacity=".28" pointer-events="none"/>`;
+    }
+    // 로봇
+    const ax = (agent % N) * S + S / 2, ay = Math.floor(agent / N) * S + S / 2;
+    h += `<circle cx="${ax}" cy="${ay}" r="15" fill="var(--accent)" stroke="#fff" stroke-width="3" pointer-events="none"/>
+          <text x="${ax}" y="${ay + 7}" text-anchor="middle" font-size="16" pointer-events="none">🤖</text>`;
+    // 격자선
+    for (let i = 0; i <= N; i++) {
+      h += `<line x1="${i * S}" y1="0" x2="${i * S}" y2="500" stroke="#6f6b63" stroke-width="${i % N ? 1.5 : 3}" pointer-events="none"/>
+            <line x1="0" y1="${i * S}" x2="500" y2="${i * S}" stroke="#6f6b63" stroke-width="${i % N ? 1.5 : 3}" pointer-events="none"/>`;
+    }
+    if (editMode) h += `<rect x="1.5" y="1.5" width="497" height="497" fill="none" stroke="var(--warn)" stroke-width="6" stroke-dasharray="14 8" pointer-events="none"/>`;
+    board.innerHTML = h;
+
+    $("sEp").textContent = episodes;
+    $("sStep").textContent = steps;
+    $("sRew").textContent = fmt(epReward);
+    $("sEps").textContent = fmt(P.eps);
+    $("oSlip").textContent = Math.round(P.slip * 100) + "%";
+    renderCalc(); renderLog(); renderChart(); renderChart2();
+  }
+
+  function renderCalc() {
+    const c = lastChange, el = $("calc");
+    if (!c) { el.innerHTML = `<span style="color:var(--muted)">아직 움직이지 않았어요. 방향키를 눌러 보세요.</span>`; return; }
+    const a = P.alpha, g = P.gamma;
+    const where = c.why ? ` · ${c.why}` : ` → ${c.next + 1}번 칸`;
+    let h = `<div class="move">${c.s + 1}번 칸에서 <b>${DIR_NAME[c.a]}</b>${where} · 받은 점수 <b>${fmt(c.r)}</b></div>`;
+    if (c.done) {
+      h += `<div class="eq"><small>① 목표값 = 받은 점수 (맛집에 도착하면 그다음이 없어요)</small>
+            목표값 = <b>${fmt(c.target)}</b></div>`;
+    } else {
+      h += `<div class="eq"><small>① 목표값 = 받은 점수 + γ × (${c.next + 1}번 칸의 가장 큰 Q값)</small>
+            ${fmt(c.r)} + ${fmt(g)} × ${signed(c.futureMax)} = <b>${fmt(c.target)}</b></div>`;
+    }
+    h += `<div class="eq"><small>② 새 Q = (1 − α) × 원래 Q + α × 목표값</small>
+          (1 − ${fmt(a)}) × ${signed(c.old)} + ${fmt(a)} × ${signed(c.target)} = <span class="res">${fmt(c.nq)}</span></div>`;
+    el.innerHTML = h;
+  }
+  function renderLog() { $("log").innerHTML = logItems.slice(0, 12).map(t => `<li>${t}</li>`).join(""); }
+  function renderChart() {
+    const data = history.slice(-60), W = 600, H = 70;
+    if (!data.length) { $("chart").innerHTML = `<text x="8" y="40" font-size="14" fill="var(--muted)">에피소드가 끝나면 여기에 쌓여요</text>`; return; }
+    const mx = Math.max(10, ...data.map(d => d.steps)), bw = W / 60;
+    $("chart").innerHTML = data.map((d, i) => {
+      const bh = Math.max(2, (d.steps / mx) * (H - 4));
+      return `<rect x="${i * bw + 1}" y="${H - bh}" width="${bw - 2}" height="${bh}" fill="${d.reached ? "var(--good)" : "var(--muted)"}" opacity="${d.reached ? 1 : .55}" rx="1"><title>Ep ${history.length - data.length + i + 1}: ${d.steps}걸음</title></rect>`;
+    }).join("");
+  }
+
+  function renderChart2() {
+    const el = $("chart2"), data = history.slice(-60), W = 600, H = 90, L = 44, T = 8, B = 10;
+    if (!data.length) { el.innerHTML = `<text x="8" y="48" font-size="14" fill="var(--muted)">에피소드가 끝나면 선이 그려져요</text>`; return; }
+    let lo = Math.min(0, ...data.map(d => d.startQ)), hi = Math.max(0, ...data.map(d => d.startQ));
+    if (hi - lo < 1e-6) hi = lo + 1;
+    const y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+    const x = i => L + (data.length === 1 ? 0 : i * (W - L - 8) / (data.length - 1));
+    const pts = data.map((d, i) => `${x(i).toFixed(1)},${y(d.startQ).toFixed(1)}`).join(" ");
+    const last = data[data.length - 1].startQ;
+    el.innerHTML =
+      `<line x1="${L}" x2="${W - 4}" y1="${y(0)}" y2="${y(0)}" stroke="var(--line)" stroke-width="1.5"/>
+       <text x="${L - 6}" y="${y(hi) + 4}" font-size="12" text-anchor="end" fill="var(--muted)">${fmt(hi)}</text>
+       <text x="${L - 6}" y="${y(lo) + 4}" font-size="12" text-anchor="end" fill="var(--muted)">${fmt(lo)}</text>
+       ${lo < 0 && hi > 0 ? `<text x="${L - 6}" y="${y(0) + 4}" font-size="12" text-anchor="end" fill="var(--muted)">0</text>` : ""}
+       <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>
+       <circle cx="${x(data.length - 1)}" cy="${y(last)}" r="4.5" fill="var(--accent)"/>
+       <text x="${Math.min(x(data.length - 1), W - 40)}" y="${Math.max(14, y(last) - 8)}" font-size="13" font-weight="700" fill="var(--ink)">${fmt(last)}</text>`;
+  }
+
+  let toastTimer;
+  function toast(msg) {
+    const t = $("toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 1600);
+  }
+
+  // ---------- 설정 ----------
+  const ids = ["alpha", "gamma", "eps", "slip", "rStep", "rHit", "rGoal", "rGoal2"];
+  function syncInputs(skip) {
+    ids.forEach(k => { if (k !== skip) $(k).value = P[k]; });   // 지금 입력 중인 칸은 건드리지 않음
+    $("decay").checked = P.decay;
+    $("oAlpha").textContent = fmt(P.alpha); $("oGamma").textContent = fmt(P.gamma); $("oEps").textContent = fmt(P.eps);
+  }
+  function applyPreset(name) {
+    Object.assign(P, PRESETS[name]); syncInputs();
+    $("presetEasy").classList.toggle("on", name === "easy");
+    $("presetCode").classList.toggle("on", name === "code");
+    resetQ(); render();
+    toast(name === "easy" ? "쉬운 규칙: α=1(그대로 복사), 이동 0점, 맛집 +1점" : "SPIKE 코드 규칙: α=0.2, 이동 −1점, 충돌 −5점, 맛집 +30점");
+  }
+  ids.forEach(k => $(k).addEventListener("input", () => {
+    const v = parseFloat($(k).value.replace("−", "-")); if (!isNaN(v)) P[k] = v;
+    $("presetEasy").classList.remove("on"); $("presetCode").classList.remove("on");
+    syncInputs(k); render();
+  }));
+  // 입력을 마치면 칸 안의 글자를 실제 값으로 정리 ("-"만 남은 경우 등)
+  ids.forEach(k => $(k).addEventListener("change", () => syncInputs()));
+  // ± 버튼: 스마트폰 숫자 키패드에 '-'가 없어도 음수를 넣을 수 있게
+  document.querySelectorAll(".pm").forEach(b => b.addEventListener("click", () => {
+    const k = b.dataset.for;
+    P[k] = -P[k] || 0;
+    $("presetEasy").classList.remove("on"); $("presetCode").classList.remove("on");
+    syncInputs(); render();
+  }));
+  $("decay").addEventListener("change", e => { P.decay = e.target.checked; });
+
+  // ---------- 조작 ----------
+  function manual(a) { if (running) return; doStep(a, false); render(); }
+  document.querySelectorAll(".pad button").forEach(b => b.addEventListener("click", () => manual(+b.dataset.a)));
+  const KEY = { ArrowUp: UP, ArrowRight: RIGHT, ArrowDown: DOWN, ArrowLeft: LEFT, w: UP, d: RIGHT, s: DOWN, a: LEFT };
+  window.addEventListener("keydown", e => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.key in KEY) { e.preventDefault(); manual(KEY[e.key]); }
+  });
+  $("btnHome").onclick = () => { if (running) return; goHome(); lastChange = null; render(); };
+  $("btnResetQ").onclick = () => { if (running) return; resetQ(); render(); toast("Q-table을 모두 0으로 지웠어요"); };
+  $("btnArrows").onclick = e => { showArrows = !showArrows; e.target.classList.toggle("on", showArrows); render(); };
+
+  $("btnEdit").onclick = e => {
+    if (running) return;
+    editMode = !editMode; e.target.classList.toggle("on", editMode);
+    e.target.textContent = editMode ? "✅ 지도 바꾸기 끝" : "✏️ 지도 바꾸기";
+    render();
+  };
+  board.addEventListener("click", e => {
+    if (!editMode) return;
+    const pt = board.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    const p = pt.matrixTransform(board.getScreenCTM().inverse());
+    const s = Math.floor(p.y / S) * N + Math.floor(p.x / S);
+    if (s < 0 || s >= N * N || s === START) return;
+    cells[s] = (cells[s] + 1) % 4;
+    if (agent === s) goHome();
+    render();
+  });
+
+  // ---------- 자동 연습 ----------
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  function setRunning(v) {
+    running = v;
+    ["auto1", "autoE1", "autoE10", "autoE100", "btnHome", "btnResetQ", "btnEdit", "presetEasy", "presetCode", "mapDefault", "mapTwo"].forEach(id => $(id).disabled = v);
+    document.querySelectorAll(".pad button").forEach(b => b.disabled = v);
+  }
+  async function autoEpisodes(n) {
+    if (running || editMode) return;
+    setRunning(true);
+    const goal = episodes + n;
+    let k = 0;
+    while (running && episodes < goal) {
+      doStep(chooseAction(), true);
+      const d = +$("speed").value;
+      if (d > 0) { render(); await sleep(d); }
+      else if (++k % 300 === 0) { render(); await sleep(0); }
+    }
+    setRunning(false); render();
+  }
+  $("auto1").onclick = () => { if (running || editMode) return; doStep(chooseAction(), true); render(); };
+  $("autoE1").onclick = () => autoEpisodes(1);
+  $("autoE10").onclick = () => autoEpisodes(10);
+  $("autoE100").onclick = () => autoEpisodes(100);
+  $("btnStop").onclick = () => { running = false; };
+  $("presetEasy").onclick = () => applyPreset("easy");
+  $("presetCode").onclick = () => applyPreset("code");
+  $("mapDefault").onclick = () => { if (running) return; defaultMap(); resetQ(); render(); toast("기본 지도: 벽 3·8·13·18번, 맛집 25번 (Q-table도 지웠어요)"); };
+  $("mapTwo").onclick = () => { if (running) return; twoGoalMap(); resetQ(); render(); toast("맛집 2개 지도: 가까운 A(5번), 먼 B(25번) (Q-table도 지웠어요)"); };
+
+  // ---------- 시작 ----------
+  defaultMap();
+  Object.assign(P, PRESETS.easy);
+  syncInputs(); $("presetEasy").classList.add("on");
+  resetQ(); render();
+})();
+</script>
+</body>
+</html>
